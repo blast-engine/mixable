@@ -40,7 +40,7 @@ export function createMixableClass({
       try {
         callConstructors(this, args)
       } catch(e) {
-        throw new Error(`error constructing ${MixableClass.className()}: ${e.message}`)
+        throw new Error(`error constructing ${MixableClass.className()}: ${e.message} ${e.stack}`)
       }
       return this
     })
