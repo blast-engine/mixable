@@ -75,8 +75,6 @@ export function callConstructors(
   instance = {},
   args = []
 ) {
-  // @todo: this is too much back and forth between proto and constructor
-  getMixableMeta(Object.getPrototypeOf(instance).constructor)
-    .constructors
+  instance.class().constructors()
     .forEach(({ _constructor }) => _constructor.call(instance, ...args))
 }

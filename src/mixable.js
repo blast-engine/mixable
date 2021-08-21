@@ -38,6 +38,7 @@ export function createMixableClass({
 
     MixableClass = classFactory(function(...args) {
       try {
+        debugger
         callConstructors(this, args)
       } catch(e) {
         throw new Error(`error constructing ${MixableClass.className()}: ${e.message} ${e.stack}`)
@@ -58,7 +59,6 @@ export function createMixableClass({
 
   }
 
-  MixableClass.className = name
 
   MixableClass.mixableMeta = function () {
     return getMixableMeta(this)
@@ -87,7 +87,11 @@ export function createMixableClass({
   }
 
   MixableClass.prototype.is = function (...MixableClasses) {
-    return MixableClasses.every(MC => this.constructor.inheritsFrom(MC))
+    return MixableClasses.every(MC => this.class().inheritsFrom(MC))
+  }
+
+  MixableClass.prototype.class = function () {
+    return this.constructor
   }
 
   initMixableMeta(MixableClass, name)
