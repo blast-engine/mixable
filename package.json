@@ -1,6 +1,6 @@
 {
   "name": "@blast-engine/mixable",
-  "version": "2.0.20",
+  "version": "2.0.21",
   "description": "Multiple inheritance for JavaScript",
   "main": "dist/mixable.js",
   "scripts": {
