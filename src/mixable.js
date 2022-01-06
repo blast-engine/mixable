@@ -1,104 +1,158 @@
-import { 
-  callConstructors, 
-  getMixableMeta, 
-  initMixableMeta, 
-  applyParents, 
-  applySelf,
-} from './mixable-behaviour.functions'
+import { copyMembers } from './copy-members.functions'
 
-const DEFAULT_CLASS_NAME = 'AnonymousClass'
+const ANONYMOUS_CLASS_NAME = 'AnonymousClass'
+const META_KEY = '__mixable_meta'
 
-export const isMixableClass = constructor => !!(
-  typeof constructor === 'function' 
-  && getMixableMeta(constructor)
-) 
+export const isMixableClass = constructor => 
+  !!(typeof constructor === 'function' && constructor[META_KEY]) 
 
-export const isMixableInstance = object => !!(
-  typeof object === 'object' 
-  && getMixableMeta(object.constructor)
-) 
+export const isMixableInstance = object => 
+  !!(typeof object === 'object' && object.constructor[META_KEY]) 
 
-export function createMixableClass({
-  name = DEFAULT_CLASS_NAME,
+const createCreateMixableClass = ({ registry, opts }) => ({
+  name,
   inherits = [],
   body = class {},
-  staticProps = {}
-}) {
+  staticProps = {},
+  provisions = {}
+}) => {
 
-  let MixableClass
+  const assert = ({ check, failMsg }) => {
+    if (!opts.doAssertions) return
+    else if (check()) return
+    else opts.onAssertionFail(failMsg)
+  }
+
+  // ---
+
+  if (!name) name = ANONYMOUS_CLASS_NAME + `_${registry.anonymousClassCounter++}`
   
-  const USE_NAMED_CLASS = true
-  if (USE_NAMED_CLASS) {
+  assert({
+    check: () => !registry.classes[name], 
+    failMsg: `class ${name} already exists`
+  })
+  
+  // ---
 
-    const classFactory = new Function('mixableClassConstructor', `
-      return function ${name}(...args) {
-        return mixableClassConstructor.call(this, ...args)
-      }
-    `)
-
-    MixableClass = classFactory(function(...args) {
-      try {
-        debugger
-        callConstructors(this, args)
-      } catch(e) {
-        throw new Error(`error constructing ${MixableClass.className()}: ${e.message} ${e.stack}`)
-      }
-      return this
-    })
-
-  } else {
-
-    MixableClass = function(...args) {
-      try {
-        callConstructors(this, args)
-      } catch(e) {
-        throw new Error(`error constructing ${MixableClass.className()}: ${e.message}`)
-      }
-      return this
-    }
-
+  const callConstructors = (instance, ...args) => {
+    const i = instance 
+    i._provisions = i._p = provisions
+    i._postConstructCallbacks = []
+    i.class().constructors().forEach(ctr => ctr.call(i, ...args))
+    i._postConstructCallbacks.forEach(cb => cb())
   }
 
+  let MixableClass = function(...args) {
+    try { callConstructors(this, ...args) } 
+    catch(e) { throw new Error(`error constructing ${MixableClass.className()}: ${e.message} ${e.stack}`) }
+    return this
+  }
 
-  MixableClass.mixableMeta = function () {
-    return getMixableMeta(this)
+  if (opts.namedClasses) {
+    const namedConstructorCode = 
+      `return function ${name}(...args) { return mixableClassConstructor.call(this, ...args) }`
+    MixableClass = new Function('mixableClassConstructor', namedConstructorCode)(MixableClass)
+  }
+
+  // ---
+
+  const inheritedLayers = inherits.reduce((mergedLayers, MixableClass) => {
+    const meta = MixableClass.mixableMeta()
+    const newLayers = meta.layers
+      .filter(({ name: candidateLayerName }) => mergedLayers
+        .every(({ name: existingLayerName }) => candidateLayerName !== existingLayerName ))
+    return mergedLayers.concat(newLayers)
+  }, [])
+
+  const bodyLayer = { 
+    name,
+    staticProps,
+    body,
+    _constructor: body.prototype._constructor || function(){}
+  }
+
+  const layers = inheritedLayers.concat(bodyLayer)
+  const meta = { name, layers }
+  MixableClass[META_KEY] = meta
+
+  layers.forEach(layer => {
+    copyMembers({ source: layer.body, dest: MixableClass })
+    Object.keys(layer.staticProps)
+      .forEach(propName => MixableClass[propName] = staticProps[propName])
+  })
+
+  // ---
+
+  MixableClass.provisions = provisions
+
+  MixableClass.mixableMeta = function() {
+    return this[META_KEY]
   }
   
-  MixableClass.className = function () {
-    return this.mixableMeta().name
-  }
-  
-  MixableClass.constructors = function () {
-    return this.mixableMeta().constructors
+  MixableClass.className = function() {
+    return this[META_KEY].name
   }
 
-  // @todo: doesnt check that inheritance chain is in correct order
+  MixableClass.layers = function() {
+    return this[META_KEY].layers
+  }
+  
+  MixableClass.constructors = function() {
+    return this[META_KEY].layers.map(l => l._constructor)
+  }
+
   MixableClass.inheritsFrom = function (...OtherClasses) {
-
-    if (OtherClasses.some(OC => !OC || !isMixableClass(OC))) throw new Error(
-      'invalid argument provided to MixableClass.inheritsFrom(). '
-      + 'expected array of mixable classes'
-    )
+    assert({
+      check: OtherClasses.some(OC => !OC || !isMixableClass(OC)),
+      failMsg: 'invalid argument provided to MixableClass.inheritsFrom(). '
+        + 'expected array of mixable classes'
+    })
     
-    return OtherClasses
-      .every(OC => OC.constructors()
-        .every(({ name: n1 }) => this.constructors()
-          .some(({ name: n2 }) => n1 === n2)))
+    return OtherClasses.every(OC => { 
+      const meta = this[META_KEY]
+      const otherMeta = OC[META_KEY]
+      return meta.layers.some(layer => layer.name === otherMeta.name)
+    })
+  }
+
+  // ---
+
+  MixableClass.prototype.class = function () {
+    return this.constructor
+  }
+
+  MixableClass.prototype.className = function() {
+    return this.class()[META_KEY].name
   }
 
   MixableClass.prototype.is = function (...MixableClasses) {
     return MixableClasses.every(MC => this.class().inheritsFrom(MC))
   }
 
-  MixableClass.prototype.class = function () {
-    return this.constructor
-  }
+  // ---
 
-  initMixableMeta(MixableClass, name)
-  applyParents(MixableClass, inherits)
-  applySelf(MixableClass, body)
-
-  Object.keys(staticProps).forEach(k => MixableClass[k] = staticProps[k])
-
+  registry.classes[name] = MixableClass
   return MixableClass
+}
+
+// ---
+
+export const createMixableFactory = async (opts = {}) => {
+  const registry = { classes: {}, anonymousClassCounter: 0 }
+
+  const createMixableClass = createCreateMixableClass({ 
+    registry,
+    opts: {
+      namedClasses: !!opts.namedClasses,
+      doAssertions: !!opts.doAssertions,
+      onAssertionFail: opts.onAssertionFail || (msg => { throw new Error(msg) })
+    }
+  })
+  
+  return {
+    registry,
+    isMixableClass,
+    isMixableInstance,
+    createMixableClass
+  }
 }
